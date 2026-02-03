@@ -59,6 +59,19 @@
 #define PRICE_UPDATE_INTERVAL 5000
 
 // =============================================================================
+// Price Alert Configuration
+// =============================================================================
+// Alert when price changes more than this percentage
+#define ALERT_THRESHOLD_PERCENT 2.0
+
+// Time window for price change comparison (milliseconds)
+// 300000 = 5 minutes, 600000 = 10 minutes
+#define ALERT_TIME_WINDOW_MS 300000
+
+// How long to invert display when alert triggers (milliseconds)
+#define ALERT_FLASH_DURATION_MS 3000
+
+// =============================================================================
 // Hardware Configuration (Heltec WiFi LoRa 32 V3)
 // =============================================================================
 // Don't change these unless you're using different hardware

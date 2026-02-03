@@ -8,6 +8,8 @@ Live XRP price from the XRPL DEX displayed on a Heltec WiFi LoRa 32 V3.
 
 - **Real-time pricing** from the XRPL decentralized exchange
 - **Configurable trading pairs** - XRP/USD, XRP/RLUSD, XRP/SOLO, or any issued currency
+- **Price change alerts** - Screen inverts when price moves beyond threshold
+- **Percent change indicator** - Shows ▲/▼ with % change from recent price
 - **Bid/Ask spread** displayed at bottom
 - **Secure WebSocket** connection to XRPL nodes
 - **Configurable update interval**
@@ -89,20 +91,40 @@ Or use your own node for lower latency.
 
 Lower values = more responsive, but more load on the XRPL node. Recommended: 1000-10000ms.
 
+### Price Alerts
+
+Configure alerts when price moves significantly:
+
+```c
+// Alert when price changes more than 2%
+#define ALERT_THRESHOLD_PERCENT 2.0
+
+// Compare to price from 5 minutes ago
+#define ALERT_TIME_WINDOW_MS 300000
+
+// Invert display for 3 seconds when alert triggers
+#define ALERT_FLASH_DURATION_MS 3000
+```
+
+When triggered, the display inverts (white on black → black on white) to catch your attention. The ▲/▼ indicator always shows current % change from the configured time window.
+
 ## Display Layout
 
 ```
 XRP/USD              LIVE
                          
       $2.4532           
-                         
+       ▲ 1.25%          
 2.4530            2.4534
 ```
 
 - **Top left:** Trading pair label
 - **Top right:** Connection status (LIVE / ...)
 - **Center:** Mid-price (large font)
+- **Below price:** Change indicator (▲/▼ with %)
 - **Bottom:** Bid (left) / Ask (right) spread
+
+When a price alert triggers (change exceeds threshold), the entire display inverts colors for visibility.
 
 ## Troubleshooting
 

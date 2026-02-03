@@ -70,6 +70,74 @@ double bestAsk = 0.0;
 unsigned long lastRequest = 0;
 int requestId = 1;
 
+// Price alert state
+#define PRICE_HISTORY_SIZE 60
+double priceHistory[PRICE_HISTORY_SIZE];
+unsigned long priceTimestamps[PRICE_HISTORY_SIZE];
+int priceHistoryIndex = 0;
+int priceHistoryCount = 0;
+bool alertActive = false;
+unsigned long alertStartTime = 0;
+double percentChange = 0.0;
+
+// Record current price in history buffer
+void recordPrice(double price) {
+    if (price <= 0 || price >= 10000) return;
+    
+    priceHistory[priceHistoryIndex] = price;
+    priceTimestamps[priceHistoryIndex] = millis();
+    priceHistoryIndex = (priceHistoryIndex + 1) % PRICE_HISTORY_SIZE;
+    if (priceHistoryCount < PRICE_HISTORY_SIZE) priceHistoryCount++;
+}
+
+// Get price from approximately 'msAgo' milliseconds ago
+double getPriceFromHistory(unsigned long msAgo) {
+    if (priceHistoryCount == 0) return 0;
+    
+    unsigned long targetTime = millis() - msAgo;
+    double closestPrice = 0;
+    unsigned long closestDiff = ULONG_MAX;
+    
+    for (int i = 0; i < priceHistoryCount; i++) {
+        unsigned long diff = (priceTimestamps[i] > targetTime) ? 
+                             (priceTimestamps[i] - targetTime) : 
+                             (targetTime - priceTimestamps[i]);
+        if (diff < closestDiff) {
+            closestDiff = diff;
+            closestPrice = priceHistory[i];
+        }
+    }
+    
+    // Only return if we have data close enough to the target time
+    if (closestDiff < msAgo / 2) return closestPrice;
+    return 0;
+}
+
+// Check price change and trigger alert if needed
+void checkPriceAlert(double currentPrice) {
+    if (currentPrice <= 0) return;
+    
+    double oldPrice = getPriceFromHistory(ALERT_TIME_WINDOW_MS);
+    if (oldPrice <= 0) {
+        percentChange = 0;
+        return;
+    }
+    
+    percentChange = ((currentPrice - oldPrice) / oldPrice) * 100.0;
+    
+    // Trigger alert if threshold exceeded and not already alerting
+    if (!alertActive && fabs(percentChange) >= ALERT_THRESHOLD_PERCENT) {
+        alertActive = true;
+        alertStartTime = millis();
+        Serial.printf("ALERT! Price change: %.2f%%\n", percentChange);
+    }
+    
+    // End alert after duration
+    if (alertActive && (millis() - alertStartTime >= ALERT_FLASH_DURATION_MS)) {
+        alertActive = false;
+    }
+}
+
 void initDisplay() {
     // Hardware reset for OLED
     pinMode(OLED_RST, OUTPUT);
@@ -228,6 +296,13 @@ void onEvent(WebsocketsEvent event, String data) {
 void updateDisplay() {
     display->clear();
     
+    // Invert display during alert
+    if (alertActive) {
+        display->invertDisplay();
+    } else {
+        display->normalDisplay();
+    }
+    
     if (xrpPrice > 0 && xrpPrice < 10000 && !isinf(xrpPrice)) {
         // Build price string with configured symbol and decimals
         char price[24];
@@ -247,8 +322,17 @@ void updateDisplay() {
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         display->drawString(64, 18, price);
         
-        // Bid/Ask spread at bottom
+        // Price change indicator (between price and bid/ask)
         display->setFont(ArialMT_Plain_10);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        if (priceHistoryCount > 5 && fabs(percentChange) >= 0.01) {
+            char changeStr[16];
+            const char* arrow = percentChange >= 0 ? "▲" : "▼";
+            snprintf(changeStr, sizeof(changeStr), "%s %.2f%%", arrow, fabs(percentChange));
+            display->drawString(64, 44, changeStr);
+        }
+        
+        // Bid/Ask spread at bottom
         char bid[16], ask[16];
         snprintf(format, sizeof(format), "%%.%df", QUOTE_DECIMALS);
         snprintf(bid, sizeof(bid), format, bestBid);
@@ -288,16 +372,30 @@ void setup() {
 }
 
 void loop() {
+    static double lastRecordedPrice = 0;
+    
     if (wsConnected) {
         wsClient.poll();
         if (millis() - lastRequest >= PRICE_UPDATE_INTERVAL) {
             requestOrderBook();
             lastRequest = millis();
+            
+            // Record price for history tracking (only when it changes)
+            if (xrpPrice > 0 && xrpPrice != lastRecordedPrice) {
+                recordPrice(xrpPrice);
+                checkPriceAlert(xrpPrice);
+                lastRecordedPrice = xrpPrice;
+            }
         }
     } else {
         // Reconnect if disconnected
         connectWebSocket();
         delay(5000);
+    }
+    
+    // Keep checking alert state even between price updates
+    if (alertActive && (millis() - alertStartTime >= ALERT_FLASH_DURATION_MS)) {
+        alertActive = false;
     }
     
     updateDisplay();
