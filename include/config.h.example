@@ -81,4 +81,17 @@
 #define OLED_SCL 18
 #define OLED_RST 21
 
+// =============================================================================
+// Portfolio Configuration (optional)
+// =============================================================================
+// Add your XRPL wallet addresses to enable portfolio tracking
+// Press the PRG button to cycle between ticker and portfolio views
+// Comment out or set WALLET_COUNT to 0 to disable portfolio feature
+
+// const char* WALLET_ADDRESSES[] = {
+//     "rYourAddress1...",
+//     "rYourAddress2..."
+// };
+// #define WALLET_COUNT 2
+
 #endif

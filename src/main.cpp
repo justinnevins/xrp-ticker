@@ -1,13 +1,11 @@
 /**
- * XRP Price Ticker for Heltec WiFi LoRa 32 V3
+ * XRP Price Ticker + Portfolio Tracker for Heltec WiFi LoRa 32 V3
  * 
- * Displays live XRP price from the XRPL DEX on the built-in OLED.
- * Configurable for different trading pairs (XRP/USD, XRP/RLUSD, XRP/SOLO, etc.)
+ * Press the PRG button to cycle between:
+ *   - Live price ticker (default)
+ *   - Portfolio value
  * 
  * Setup: Copy include/config.h.example to include/config.h and edit your settings.
- * 
- * Repository: https://github.com/justinnevins/xrp-ticker
- * License: MIT
  */
 
 #include <Arduino.h>
@@ -21,7 +19,15 @@
 
 using namespace websockets;
 
-// Let's Encrypt ISRG Root X1 (valid until 2035)
+// User button (PRG button on Heltec V3)
+#define BUTTON_PIN 0
+
+// Display modes
+#define MODE_TICKER 0
+#define MODE_PORTFOLIO 1
+int displayMode = MODE_TICKER;
+
+// Let's Encrypt ISRG Root X1
 const char* letsencrypt_root_ca = R"EOF(
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -56,18 +62,18 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
-// Display - initialized after hardware reset
+// Display
 SSD1306Wire *display = nullptr;
 
-// WebSocket client
+// WebSocket
 WebsocketsClient wsClient;
-
-// State
 bool wsConnected = false;
+
+// Ticker state
 double xrpPrice = 0.0;
 double bestBid = 0.0;
 double bestAsk = 0.0;
-unsigned long lastRequest = 0;
+unsigned long lastPriceRequest = 0;
 int requestId = 1;
 
 // Price alert state
@@ -80,71 +86,71 @@ bool alertActive = false;
 unsigned long alertStartTime = 0;
 double percentChange = 0.0;
 
-// Record current price in history buffer
-void recordPrice(double price) {
-    if (price <= 0 || price >= 10000) return;
-    
-    priceHistory[priceHistoryIndex] = price;
-    priceTimestamps[priceHistoryIndex] = millis();
-    priceHistoryIndex = (priceHistoryIndex + 1) % PRICE_HISTORY_SIZE;
-    if (priceHistoryCount < PRICE_HISTORY_SIZE) priceHistoryCount++;
-}
+// Portfolio state
+#ifdef WALLET_COUNT
+double walletBalances[WALLET_COUNT] = {0};
+int balanceRequestIds[WALLET_COUNT] = {0};
+#else
+double walletBalances[1] = {0};
+int balanceRequestIds[1] = {0};
+#define WALLET_COUNT 0
+#endif
+int balancesReceived = 0;
+double totalXrp = 0;
+unsigned long lastPortfolioRequest = 0;
+bool portfolioLoaded = false;
 
-// Get the oldest price in our history buffer
+// Button state
+bool lastButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+#define DEBOUNCE_DELAY 50
+
+// Get oldest price for comparison
 double getOldestPrice() {
     if (priceHistoryCount == 0) return 0;
-    
-    // Find oldest timestamp and its price
     unsigned long oldestTime = ULONG_MAX;
     double oldestPrice = 0;
-    
     for (int i = 0; i < priceHistoryCount; i++) {
         if (priceTimestamps[i] < oldestTime) {
             oldestTime = priceTimestamps[i];
             oldestPrice = priceHistory[i];
         }
     }
-    
     return oldestPrice;
 }
 
-// Check price change and trigger alert if needed
+void recordPrice(double price) {
+    if (price <= 0 || price >= 10000) return;
+    priceHistory[priceHistoryIndex] = price;
+    priceTimestamps[priceHistoryIndex] = millis();
+    priceHistoryIndex = (priceHistoryIndex + 1) % PRICE_HISTORY_SIZE;
+    if (priceHistoryCount < PRICE_HISTORY_SIZE) priceHistoryCount++;
+}
+
 void checkPriceAlert(double currentPrice) {
     if (currentPrice <= 0) return;
-    
     double oldPrice = getOldestPrice();
     if (oldPrice <= 0) {
         percentChange = 0;
         return;
     }
-    
     percentChange = ((currentPrice - oldPrice) / oldPrice) * 100.0;
-    
-    // Trigger alert if threshold exceeded and not already alerting
     if (!alertActive && fabs(percentChange) >= ALERT_THRESHOLD_PERCENT) {
         alertActive = true;
         alertStartTime = millis();
-        Serial.printf("ALERT! Price change: %.2f%%\n", percentChange);
     }
-    
-    // End alert after duration
     if (alertActive && (millis() - alertStartTime >= ALERT_FLASH_DURATION_MS)) {
         alertActive = false;
     }
 }
 
 void initDisplay() {
-    // Hardware reset for OLED - longer delays for reliable init after flash
     pinMode(OLED_RST, OUTPUT);
     digitalWrite(OLED_RST, LOW);
     delay(100);
     digitalWrite(OLED_RST, HIGH);
     delay(100);
-    
-    // Initialize I2C
     Wire.begin(OLED_SDA, OLED_SCL);
-    
-    // Create display instance
     display = new SSD1306Wire(0x3c, OLED_SDA, OLED_SCL, GEOMETRY_128_64, I2C_ONE);
     display->init();
     display->flipScreenVertically();
@@ -165,43 +171,32 @@ void showStatus(const char* line1, const char* line2 = "", const char* line3 = "
 void connectWiFi() {
     Serial.printf("Connecting to: %s\n", WIFI_SSID);
     showStatus("Connecting WiFi...", WIFI_SSID);
-    
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
     int attempts = 0;
     while (WiFi.status() != WL_CONNECTED && attempts < 40) {
         delay(500);
-        Serial.print(".");
         attempts++;
     }
-    
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\nConnected! IP: %s\n", WiFi.localIP().toString().c_str());
         showStatus("WiFi: OK", WiFi.localIP().toString().c_str());
     } else {
-        Serial.printf("\nFailed! Status: %d\n", WiFi.status());
-        showStatus("WiFi: FAILED", "Check credentials");
+        showStatus("WiFi: FAILED");
     }
-    delay(2000);
+    delay(1000);
 }
 
 void connectWebSocket() {
     String wsUrl = "wss://" + String(XRPL_WS_HOST) + ":" + String(XRPL_WS_PORT) + XRPL_WS_PATH;
-    Serial.printf("Connecting WS: %s\n", wsUrl.c_str());
     showStatus("Connecting XRPL...", XRPL_WS_HOST);
-    
     wsClient.setCACert(letsencrypt_root_ca);
     wsConnected = wsClient.connect(wsUrl);
-    
-    Serial.printf("WS result: %s\n", wsConnected ? "OK" : "FAILED");
 }
 
-void requestOrderBook() {
+void requestPrice() {
     if (!wsConnected) return;
     
-    // Request BID side: someone wants to buy XRP with QUOTE currency
-    // TakerGets = XRP, TakerPays = QUOTE
+    // Bid side
     JsonDocument bidReq;
     bidReq["id"] = requestId++;
     bidReq["command"] = "book_offers";
@@ -213,8 +208,7 @@ void requestOrderBook() {
     serializeJson(bidReq, bidJson);
     wsClient.send(bidJson);
     
-    // Request ASK side: someone wants to sell XRP for QUOTE currency
-    // TakerGets = QUOTE, TakerPays = XRP
+    // Ask side
     JsonDocument askReq;
     askReq["id"] = requestId++;
     askReq["command"] = "book_offers";
@@ -227,11 +221,56 @@ void requestOrderBook() {
     wsClient.send(askJson);
 }
 
+void requestPortfolio() {
+#if WALLET_COUNT > 0
+    if (!wsConnected) return;
+    balancesReceived = 0;
+    totalXrp = 0;
+    
+    for (int i = 0; i < WALLET_COUNT; i++) {
+        walletBalances[i] = 0;
+        JsonDocument req;
+        balanceRequestIds[i] = requestId;
+        req["id"] = requestId++;
+        req["command"] = "account_info";
+        req["account"] = WALLET_ADDRESSES[i];
+        req["ledger_index"] = "validated";
+        String json;
+        serializeJson(req, json);
+        wsClient.send(json);
+    }
+#endif
+}
+
 void onMessage(WebsocketsMessage msg) {
     JsonDocument doc;
     if (deserializeJson(doc, msg.data())) return;
     
+    int msgId = doc["id"] | 0;
     const char* status = doc["status"];
+    
+    // Check portfolio responses
+#if WALLET_COUNT > 0
+    for (int i = 0; i < WALLET_COUNT; i++) {
+        if (msgId == balanceRequestIds[i]) {
+            if (status && strcmp(status, "success") == 0) {
+                const char* balanceStr = doc["result"]["account_data"]["Balance"];
+                if (balanceStr) {
+                    double drops = atof(balanceStr);
+                    walletBalances[i] = drops / 1000000.0;
+                    totalXrp += walletBalances[i];
+                }
+            }
+            balancesReceived++;
+            if (balancesReceived >= WALLET_COUNT) {
+                portfolioLoaded = true;
+            }
+            return;
+        }
+    }
+#endif
+    
+    // Price responses
     if (!status || strcmp(status, "success") != 0) return;
     
     JsonArray offers = doc["result"]["offers"].as<JsonArray>();
@@ -240,35 +279,27 @@ void onMessage(WebsocketsMessage msg) {
     JsonObject offer = offers[0];
     JsonVariant tg = offer["TakerGets"];
     
-    // Determine which side this is based on TakerGets type
     if (tg.is<JsonObject>()) {
-        // TakerGets is issued currency object - this is ASK side
         const char* quoteStr = tg["value"].as<const char*>();
         const char* dropsStr = offer["TakerPays"].as<const char*>();
-        
         double quote = quoteStr ? atof(quoteStr) : 0;
         double drops = dropsStr ? atof(dropsStr) : 0;
         double xrp = drops / 1000000.0;
-        
         if (quote > 0 && xrp > 0) {
             bestAsk = quote / xrp;
         }
     } else {
-        // TakerGets is XRP drops as string - this is BID side
         const char* dropsStr = tg.as<const char*>();
         JsonVariant tp = offer["TakerPays"];
         const char* quoteStr = tp["value"].as<const char*>();
-        
         double drops = dropsStr ? atof(dropsStr) : 0;
         double quote = quoteStr ? atof(quoteStr) : 0;
         double xrp = drops / 1000000.0;
-        
         if (xrp > 0 && quote > 0) {
             bestBid = quote / xrp;
         }
     }
     
-    // Calculate mid-price from bid/ask
     if (bestBid > 0 && bestAsk > 0 && bestBid < 10000 && bestAsk < 10000) {
         xrpPrice = (bestBid + bestAsk) / 2.0;
     } else if (bestBid > 0 && bestBid < 10000) {
@@ -281,43 +312,36 @@ void onMessage(WebsocketsMessage msg) {
 void onEvent(WebsocketsEvent event, String data) {
     if (event == WebsocketsEvent::ConnectionOpened) {
         wsConnected = true;
-        Serial.println("WebSocket connected");
     } else if (event == WebsocketsEvent::ConnectionClosed) {
         wsConnected = false;
-        Serial.println("WebSocket disconnected");
     }
 }
 
-void updateDisplay() {
+void displayTicker() {
     display->clear();
     
-    // Invert display during alert
     if (alertActive) {
         display->invertDisplay();
     } else {
         display->normalDisplay();
     }
     
-    if (xrpPrice > 0 && xrpPrice < 10000 && !isinf(xrpPrice)) {
-        // Build price string with configured symbol and decimals
+    if (xrpPrice > 0 && xrpPrice < 10000) {
         char price[24];
         char format[16];
         snprintf(format, sizeof(format), "%s%%.%df", QUOTE_SYMBOL, QUOTE_DECIMALS);
         snprintf(price, sizeof(price), format, xrpPrice);
         
-        // Header: pair label + connection status
         display->setFont(ArialMT_Plain_10);
         display->setTextAlignment(TEXT_ALIGN_LEFT);
         display->drawString(0, 0, DISPLAY_LABEL);
         display->setTextAlignment(TEXT_ALIGN_RIGHT);
         display->drawString(128, 0, wsConnected ? "LIVE" : "...");
         
-        // Main price - large font
         display->setFont(ArialMT_Plain_24);
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         display->drawString(64, 18, price);
         
-        // Price change indicator (between price and bid/ask)
         display->setFont(ArialMT_Plain_10);
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         if (priceHistoryCount >= 2) {
@@ -331,7 +355,6 @@ void updateDisplay() {
             display->drawString(64, 44, changeStr);
         }
         
-        // Bid/Ask spread at bottom
         char bid[16], ask[16];
         snprintf(format, sizeof(format), "%%.%df", QUOTE_DECIMALS);
         snprintf(bid, sizeof(bid), format, bestBid);
@@ -341,7 +364,6 @@ void updateDisplay() {
         display->setTextAlignment(TEXT_ALIGN_RIGHT);
         display->drawString(128, 54, ask);
     } else {
-        // Loading/connecting state
         display->setFont(ArialMT_Plain_16);
         display->setTextAlignment(TEXT_ALIGN_CENTER);
         display->drawString(64, 8, DISPLAY_LABEL);
@@ -352,22 +374,97 @@ void updateDisplay() {
     display->display();
 }
 
+void displayPortfolio() {
+    display->clear();
+    display->normalDisplay();
+    
+    display->setFont(ArialMT_Plain_10);
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->drawString(0, 0, "XRP Portfolio");
+    display->setTextAlignment(TEXT_ALIGN_RIGHT);
+    display->drawString(128, 0, wsConnected ? "LIVE" : "...");
+    
+#if WALLET_COUNT > 0
+    if (totalXrp > 0) {
+        char xrpStr[24];
+        snprintf(xrpStr, sizeof(xrpStr), "%.2f XRP", totalXrp);
+        display->setFont(ArialMT_Plain_16);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->drawString(64, 14, xrpStr);
+        
+        if (xrpPrice > 0) {
+            double totalUsd = totalXrp * xrpPrice;
+            char usdStr[24];
+            if (totalUsd >= 1000) {
+                snprintf(usdStr, sizeof(usdStr), "%s%.2fK", QUOTE_SYMBOL, totalUsd / 1000.0);
+            } else {
+                snprintf(usdStr, sizeof(usdStr), "%s%.2f", QUOTE_SYMBOL, totalUsd);
+            }
+            display->setFont(ArialMT_Plain_24);
+            display->drawString(64, 32, usdStr);
+        }
+        
+        display->setFont(ArialMT_Plain_10);
+        char priceStr[16];
+        snprintf(priceStr, sizeof(priceStr), "@ $%.4f", xrpPrice);
+        display->drawString(64, 54, priceStr);
+    } else {
+        display->setFont(ArialMT_Plain_10);
+        display->setTextAlignment(TEXT_ALIGN_CENTER);
+        display->drawString(64, 28, portfolioLoaded ? "No balance" : "Loading...");
+    }
+#else
+    display->setFont(ArialMT_Plain_10);
+    display->setTextAlignment(TEXT_ALIGN_CENTER);
+    display->drawString(64, 28, "No wallets configured");
+#endif
+    
+    display->display();
+}
+
+void checkButton() {
+    static bool buttonPressed = false;
+    bool reading = digitalRead(BUTTON_PIN);
+    
+    // Simple press detection with debounce
+    if (reading == LOW && !buttonPressed) {
+        delay(50);  // Simple debounce
+        if (digitalRead(BUTTON_PIN) == LOW) {
+            buttonPressed = true;
+            
+            // Button pressed - cycle mode
+            displayMode = (displayMode + 1) % 2;
+            Serial.printf("Button pressed! Mode: %d\n", displayMode);
+            
+            // Request portfolio data when switching to portfolio mode
+            if (displayMode == MODE_PORTFOLIO && !portfolioLoaded) {
+                requestPortfolio();
+            }
+        }
+    }
+    
+    if (reading == HIGH) {
+        buttonPressed = false;
+    }
+}
+
 void setup() {
-    // Hard reset OLED immediately on boot (before anything else)
+    // Reset OLED first
     pinMode(OLED_RST, OUTPUT);
     digitalWrite(OLED_RST, LOW);
     delay(200);
     digitalWrite(OLED_RST, HIGH);
     delay(200);
     
+    // Button setup
+    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    
     Serial.begin(115200);
     delay(500);
-    Serial.println("\n=== XRP Price Ticker ===");
-    Serial.printf("Pair: %s\n", DISPLAY_LABEL);
-    Serial.printf("Update interval: %dms\n", PRICE_UPDATE_INTERVAL);
+    Serial.println("\n=== XRP Ticker + Portfolio ===");
     
     initDisplay();
-    showStatus("XRP Price Ticker", DISPLAY_LABEL, "Initializing...");
+    showStatus("XRP Ticker", "Initializing...");
     delay(1000);
     
     connectWiFi();
@@ -380,30 +477,48 @@ void setup() {
 void loop() {
     static unsigned long lastPriceRecord = 0;
     
+    // Check button
+    checkButton();
+    
     if (wsConnected) {
         wsClient.poll();
-        if (millis() - lastRequest >= PRICE_UPDATE_INTERVAL) {
-            requestOrderBook();
-            lastRequest = millis();
+        
+        // Request price regularly
+        if (millis() - lastPriceRequest >= PRICE_UPDATE_INTERVAL) {
+            requestPrice();
+            lastPriceRequest = millis();
         }
         
-        // Record price every 5 seconds for history tracking (even if unchanged)
+        // Record price for alerts
         if (xrpPrice > 0 && millis() - lastPriceRecord >= 5000) {
             recordPrice(xrpPrice);
             checkPriceAlert(xrpPrice);
             lastPriceRecord = millis();
         }
+        
+        // Refresh portfolio periodically when in that mode
+#if WALLET_COUNT > 0
+        if (displayMode == MODE_PORTFOLIO && millis() - lastPortfolioRequest >= 30000) {
+            requestPortfolio();
+            lastPortfolioRequest = millis();
+        }
+#endif
     } else {
-        // Reconnect if disconnected
         connectWebSocket();
         delay(5000);
     }
     
-    // Keep checking alert state even between price updates
+    // Check alert timeout
     if (alertActive && (millis() - alertStartTime >= ALERT_FLASH_DURATION_MS)) {
         alertActive = false;
     }
     
-    updateDisplay();
+    // Update display based on mode
+    if (displayMode == MODE_TICKER) {
+        displayTicker();
+    } else {
+        displayPortfolio();
+    }
+    
     delay(50);
 }

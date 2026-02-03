@@ -7,9 +7,10 @@ Live XRP price from the XRPL DEX displayed on a Heltec WiFi LoRa 32 V3.
 ## Features
 
 - **Real-time pricing** from the XRPL decentralized exchange
+- **Portfolio tracking** - Monitor total XRP across multiple wallets (press PRG button to switch views)
 - **Configurable trading pairs** - XRP/USD, XRP/RLUSD, XRP/SOLO, or any issued currency
 - **Price change alerts** - Screen inverts when price moves beyond threshold
-- **Percent change indicator** - Shows ▲/▼ with % change from recent price
+- **Percent change indicator** - Shows ^ / v with % change from recent price
 - **Bid/Ask spread** displayed at bottom
 - **Secure WebSocket** connection to XRPL nodes
 - **Configurable update interval**
@@ -106,7 +107,24 @@ Configure alerts when price moves significantly:
 #define ALERT_FLASH_DURATION_MS 3000
 ```
 
-When triggered, the display inverts (white on black → black on white) to catch your attention. The ▲/▼ indicator always shows current % change from the configured time window.
+When triggered, the display inverts (white on black → black on white) to catch your attention. The ^ / v indicator always shows current % change from the configured time window.
+
+### Portfolio Tracking (Optional)
+
+Add your XRPL wallet addresses to track total holdings:
+
+```c
+const char* WALLET_ADDRESSES[] = {
+    "rYourAddress1...",
+    "rYourAddress2...",
+    "rYourAddress3..."
+};
+#define WALLET_COUNT 3
+```
+
+Press the **PRG button** (small button near USB port) to switch between:
+- **Price ticker** (default) - Live price with bid/ask
+- **Portfolio view** - Total XRP and USD value across all wallets
 
 ## Display Layout
 
