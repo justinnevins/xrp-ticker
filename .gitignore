@@ -1,0 +1,17 @@
+# Config with credentials (use config.h.example as template)
+include/config.h
+
+# PlatformIO build artifacts
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

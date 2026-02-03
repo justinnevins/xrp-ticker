@@ -1,0 +1,71 @@
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// =============================================================================
+// WiFi Configuration
+// =============================================================================
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+
+// =============================================================================
+// XRPL Node Configuration
+// =============================================================================
+// Public nodes (pick one):
+//   - wss://xrplcluster.com (port 443)
+//   - wss://s1.ripple.com (port 443)
+//   - wss://s2.ripple.com (port 443)
+// Or use your own node
+
+#define XRPL_WS_HOST "xrplcluster.com"
+#define XRPL_WS_PORT 443
+#define XRPL_WS_PATH "/"
+
+// =============================================================================
+// Trading Pair Configuration
+// =============================================================================
+// The ticker shows: BASE/QUOTE (e.g., XRP/USD means "price of XRP in USD")
+// BASE is always XRP for this ticker.
+
+// --- QUOTE Currency Options ---
+// Uncomment ONE of the presets below, or define your own.
+
+// PRESET: USD (Bitstamp)
+#define QUOTE_CURRENCY "USD"
+#define QUOTE_ISSUER "rvYAfWj5gh67oV6fW32ZzP3Aw4Eubs59B"
+#define QUOTE_SYMBOL "$"
+#define QUOTE_DECIMALS 4
+
+// PRESET: RLUSD (Ripple USD)
+// #define QUOTE_CURRENCY "524C555344000000000000000000000000000000"
+// #define QUOTE_ISSUER "rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De"
+// #define QUOTE_SYMBOL "$"
+// #define QUOTE_DECIMALS 4
+
+// PRESET: SOLO
+// #define QUOTE_CURRENCY "534F4C4F00000000000000000000000000000000"
+// #define QUOTE_ISSUER "rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz"
+// #define QUOTE_SYMBOL "SOLO"
+// #define QUOTE_DECIMALS 2
+
+// =============================================================================
+// Display Configuration
+// =============================================================================
+// Label shown at top of display (e.g., "XRP/USD", "XRP/RLUSD")
+#define DISPLAY_LABEL "XRP/USD"
+
+// Update interval in milliseconds (how often to fetch price)
+// Lower = more responsive but more load on node
+// Recommended: 1000-10000
+#define PRICE_UPDATE_INTERVAL 5000
+
+// =============================================================================
+// Hardware Configuration (Heltec WiFi LoRa 32 V3)
+// =============================================================================
+// Don't change these unless you're using different hardware
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+#define OLED_SDA 17
+#define OLED_SCL 18
+#define OLED_RST 21
+
+#endif
