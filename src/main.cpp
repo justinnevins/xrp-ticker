@@ -90,34 +90,29 @@ void recordPrice(double price) {
     if (priceHistoryCount < PRICE_HISTORY_SIZE) priceHistoryCount++;
 }
 
-// Get price from approximately 'msAgo' milliseconds ago
-double getPriceFromHistory(unsigned long msAgo) {
+// Get the oldest price in our history buffer
+double getOldestPrice() {
     if (priceHistoryCount == 0) return 0;
     
-    unsigned long targetTime = millis() - msAgo;
-    double closestPrice = 0;
-    unsigned long closestDiff = ULONG_MAX;
+    // Find oldest timestamp and its price
+    unsigned long oldestTime = ULONG_MAX;
+    double oldestPrice = 0;
     
     for (int i = 0; i < priceHistoryCount; i++) {
-        unsigned long diff = (priceTimestamps[i] > targetTime) ? 
-                             (priceTimestamps[i] - targetTime) : 
-                             (targetTime - priceTimestamps[i]);
-        if (diff < closestDiff) {
-            closestDiff = diff;
-            closestPrice = priceHistory[i];
+        if (priceTimestamps[i] < oldestTime) {
+            oldestTime = priceTimestamps[i];
+            oldestPrice = priceHistory[i];
         }
     }
     
-    // Only return if we have data close enough to the target time
-    if (closestDiff < msAgo / 2) return closestPrice;
-    return 0;
+    return oldestPrice;
 }
 
 // Check price change and trigger alert if needed
 void checkPriceAlert(double currentPrice) {
     if (currentPrice <= 0) return;
     
-    double oldPrice = getPriceFromHistory(ALERT_TIME_WINDOW_MS);
+    double oldPrice = getOldestPrice();
     if (oldPrice <= 0) {
         percentChange = 0;
         return;
@@ -139,12 +134,12 @@ void checkPriceAlert(double currentPrice) {
 }
 
 void initDisplay() {
-    // Hardware reset for OLED
+    // Hardware reset for OLED - longer delays for reliable init after flash
     pinMode(OLED_RST, OUTPUT);
     digitalWrite(OLED_RST, LOW);
-    delay(50);
+    delay(100);
     digitalWrite(OLED_RST, HIGH);
-    delay(50);
+    delay(100);
     
     // Initialize I2C
     Wire.begin(OLED_SDA, OLED_SCL);
@@ -325,10 +320,14 @@ void updateDisplay() {
         // Price change indicator (between price and bid/ask)
         display->setFont(ArialMT_Plain_10);
         display->setTextAlignment(TEXT_ALIGN_CENTER);
-        if (priceHistoryCount > 5 && fabs(percentChange) >= 0.01) {
-            char changeStr[16];
-            const char* arrow = percentChange >= 0 ? "▲" : "▼";
-            snprintf(changeStr, sizeof(changeStr), "%s %.2f%%", arrow, fabs(percentChange));
+        if (priceHistoryCount >= 2) {
+            char changeStr[20];
+            if (fabs(percentChange) >= 0.001) {
+                const char* arrow = percentChange >= 0 ? "^ " : "v ";
+                snprintf(changeStr, sizeof(changeStr), "%s%.3f%%", arrow, fabs(percentChange));
+            } else {
+                snprintf(changeStr, sizeof(changeStr), "-- 0.00%%");
+            }
             display->drawString(64, 44, changeStr);
         }
         
@@ -354,8 +353,15 @@ void updateDisplay() {
 }
 
 void setup() {
+    // Hard reset OLED immediately on boot (before anything else)
+    pinMode(OLED_RST, OUTPUT);
+    digitalWrite(OLED_RST, LOW);
+    delay(200);
+    digitalWrite(OLED_RST, HIGH);
+    delay(200);
+    
     Serial.begin(115200);
-    delay(1000);
+    delay(500);
     Serial.println("\n=== XRP Price Ticker ===");
     Serial.printf("Pair: %s\n", DISPLAY_LABEL);
     Serial.printf("Update interval: %dms\n", PRICE_UPDATE_INTERVAL);
@@ -372,20 +378,20 @@ void setup() {
 }
 
 void loop() {
-    static double lastRecordedPrice = 0;
+    static unsigned long lastPriceRecord = 0;
     
     if (wsConnected) {
         wsClient.poll();
         if (millis() - lastRequest >= PRICE_UPDATE_INTERVAL) {
             requestOrderBook();
             lastRequest = millis();
-            
-            // Record price for history tracking (only when it changes)
-            if (xrpPrice > 0 && xrpPrice != lastRecordedPrice) {
-                recordPrice(xrpPrice);
-                checkPriceAlert(xrpPrice);
-                lastRecordedPrice = xrpPrice;
-            }
+        }
+        
+        // Record price every 5 seconds for history tracking (even if unchanged)
+        if (xrpPrice > 0 && millis() - lastPriceRecord >= 5000) {
+            recordPrice(xrpPrice);
+            checkPriceAlert(xrpPrice);
+            lastPriceRecord = millis();
         }
     } else {
         // Reconnect if disconnected
