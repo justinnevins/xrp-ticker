@@ -70,7 +70,7 @@ The ticker shows XRP priced in your chosen quote currency. Edit `config.h`:
 | XRP/RLUSD | `524C555344000000000000000000000000000000` | `rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De` | Ripple USD |
 | XRP/SOLO | `534F4C4F00000000000000000000000000000000` | `rsoLo2S1kiGeCcn6hCUXVrCpGMWLrRrLZz` | Sologenic |
 
-For other currencies, find the issuer address on [XRPL.org](https://xrpl.org) or your preferred explorer.
+For other currencies, find the issuer address on [xrpscan.com/tokens](https://xrpscan.com/tokens) or your preferred explorer.
 
 ### XRPL Nodes
 
